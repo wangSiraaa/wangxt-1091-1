@@ -9,7 +9,12 @@ import type {
   StatsSummary,
   RequestLog,
   CreateRequestParams,
-  ApiResponse
+  ApiResponse,
+  Transport,
+  ShiftChange,
+  AssignmentSuggestion,
+  SettlementValidation,
+  AuditTrail
 } from '../types'
 
 const request = axios.create({
@@ -61,10 +66,81 @@ export const api = {
   createCheckRequest: (data: CreateRequestParams): Promise<ApiResponse<CheckRequest>> =>
     request.post('/check-requests', data),
 
+  getAssignmentSuggestions: (id: string): Promise<ApiResponse<AssignmentSuggestion[]>> =>
+    request.get(`/check-requests/${id}/suggestions`),
+
+  getTransports: (id: string): Promise<ApiResponse<Transport[]>> =>
+    request.get(`/check-requests/${id}/transports`),
+
+  createTransport: (id: string, data: {
+    from_department: string
+    to_department: string
+    transport_type?: 'pickup' | 'sendback' | 'transfer'
+    escort_id?: string
+    operator_id?: string
+    operator_name?: string
+    remark?: string
+  }): Promise<ApiResponse<Transport>> =>
+    request.post(`/check-requests/${id}/transports`, data),
+
+  startTransport: (id: string, transportId: string, data?: {
+    operator_id?: string
+    operator_name?: string
+  }): Promise<ApiResponse<Transport>> =>
+    request.put(`/check-requests/${id}/transports/${transportId}/start`, data || {}),
+
+  completeTransport: (id: string, transportId: string, data?: {
+    operator_id?: string
+    operator_name?: string
+    remark?: string
+  }): Promise<ApiResponse<Transport>> =>
+    request.put(`/check-requests/${id}/transports/${transportId}/complete`, data || {}),
+
+  rescheduleRequest: (id: string, data: {
+    original_check_time?: string
+    new_check_time?: string
+    old_scheduled_time?: string
+    new_scheduled_time?: string
+    reason?: string
+    operator_id?: string
+    operator_name?: string
+  }): Promise<ApiResponse<CheckRequest>> =>
+    request.put(`/check-requests/${id}/reschedule`, data),
+
+  reassignRequest: (id: string, data?: {
+    operator_id?: string
+    operator_name?: string
+    reason?: string
+  }): Promise<ApiResponse<CheckRequest>> =>
+    request.put(`/check-requests/${id}/reassign`, data || {}),
+
+  getShiftChanges: (id: string): Promise<ApiResponse<ShiftChange[]>> =>
+    request.get(`/check-requests/${id}/shift-changes`),
+
+  createShiftChange: (id: string, data: {
+    to_escort_id: string
+    from_escort_id?: string
+    old_escort_id?: string
+    new_escort_id?: string
+    reason?: string
+    handover_note?: string
+    operator_id?: string
+    operator_name?: string
+  }): Promise<ApiResponse<ShiftChange>> =>
+    request.post(`/check-requests/${id}/shift-change`, data),
+
+  validateSettlement: (id: string): Promise<ApiResponse<SettlementValidation>> =>
+    request.get(`/check-requests/${id}/validate-settlement`),
+
+  getAuditTrail: (id: string): Promise<ApiResponse<AuditTrail>> =>
+    request.get(`/check-requests/${id}/audit-trail`),
+
   assignRequest: (id: string, data: {
     escort_id: string
     operator_id?: string
     operator_name?: string
+    selected_suggestion_id?: string
+    is_manual_assign?: boolean
   }): Promise<ApiResponse<CheckRequest>> =>
     request.put(`/check-requests/${id}/assign`, data),
 
@@ -82,6 +158,7 @@ export const api = {
     operator_name?: string
     settlement_amount?: number
     remark?: string
+    force_settle?: boolean
   }): Promise<ApiResponse<CheckRequest>> =>
     request.put(`/check-requests/${id}/settle`, data),
 

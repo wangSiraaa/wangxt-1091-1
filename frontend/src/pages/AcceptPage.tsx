@@ -14,6 +14,14 @@ import {
   Descriptions,
   Tabs,
   Timeline,
+  Form,
+  Input,
+  Alert,
+  List,
+  Divider,
+  Popconfirm,
+  Badge,
+  Empty,
 } from 'antd'
 import {
   ReloadOutlined,
@@ -21,9 +29,12 @@ import {
   CheckCircleOutlined,
   EyeOutlined,
   UserOutlined,
+  ThunderboltOutlined,
+  EnvironmentOutlined,
+  SwapOutlined,
 } from '@ant-design/icons'
 import { api } from '../api'
-import type { CheckRequest, Escort, RequestLog } from '../types'
+import type { CheckRequest, Escort, RequestLog, Transport, ShiftChange } from '../types'
 import {
   getStatusInfo,
   getUrgencyInfo,
@@ -31,6 +42,8 @@ import {
   formatDuration,
   getActionText,
 } from '../utils'
+
+const { TextArea } = Input
 
 const { Option } = Select
 const { TabPane } = Tabs
@@ -45,6 +58,40 @@ const AcceptPage = () => {
   const [detailModalVisible, setDetailModalVisible] = useState(false)
   const [selectedRequest, setSelectedRequest] = useState<CheckRequest | null>(null)
   const [requestLogs, setRequestLogs] = useState<RequestLog[]>([])
+  const [transports, setTransports] = useState<Transport[]>([])
+  const [shiftChanges, setShiftChanges] = useState<ShiftChange[]>([])
+  const [shiftChangeModalVisible, setShiftChangeModalVisible] = useState(false)
+  const [shiftChangeForm] = Form.useForm()
+  const [newEscortId, setNewEscortId] = useState<string>('')
+  const [detailTabKey, setDetailTabKey] = useState('info')
+
+  const fetchTransports = async (requestId: string) => {
+    try {
+      const res = await api.getTransports(requestId)
+      setTransports(res.data || [])
+    } catch (error: any) {
+      message.error(error.message || '获取转运记录失败')
+    }
+  }
+
+  const fetchShiftChanges = async (requestId: string) => {
+    try {
+      const res = await api.getShiftChanges(requestId)
+      setShiftChanges(res.data || [])
+    } catch (error: any) {
+      message.error(error.message || '获取替班记录失败')
+    }
+  }
+
+  useEffect(() => {
+    if (detailModalVisible && selectedRequest) {
+      if (detailTabKey === 'transports') {
+        fetchTransports(selectedRequest.id)
+      } else if (detailTabKey === 'shifts') {
+        fetchShiftChanges(selectedRequest.id)
+      }
+    }
+  }, [detailTabKey, detailModalVisible])
 
   const fetchData = async () => {
     if (!currentEscort) return
@@ -116,6 +163,58 @@ const AcceptPage = () => {
     }
   }
 
+  const handleCreateTransport = async (record: CheckRequest) => {
+    try {
+      await api.createTransport(record.id, {
+        from_department: record.source_department || '',
+        to_department: record.target_department || '',
+        operator_id: currentEscort?.id,
+        operator_name: currentEscort?.name,
+      })
+      message.success('已创建转运记录')
+      fetchData()
+    } catch (error: any) {
+      message.error(error.message || '操作失败')
+    }
+  }
+
+  const handleStartTransport = async (record: CheckRequest) => {
+    try {
+      if (transports.length === 0) {
+        await handleCreateTransport(record)
+      }
+      const transportId = transports[0]?.id || 'latest'
+      await api.startTransport(record.id, transportId, {
+        operator_id: currentEscort?.id,
+        operator_name: currentEscort?.name,
+      })
+      message.success('已开始转运')
+      fetchData()
+    } catch (error: any) {
+      message.error(error.message || '操作失败')
+    }
+  }
+
+  const handleCompleteTransport = async (record: CheckRequest) => {
+    Modal.confirm({
+      title: '确认完成转运',
+      content: '确认患者已安全送达目标科室？',
+      onOk: async () => {
+        try {
+          const transportId = transports[0]?.id || 'latest'
+          await api.completeTransport(record.id, transportId, {
+            operator_id: currentEscort?.id,
+            operator_name: currentEscort?.name,
+          })
+          message.success('转运完成')
+          fetchData()
+        } catch (error: any) {
+          message.error(error.message || '操作失败')
+        }
+      },
+    })
+  }
+
   const handleComplete = async (record: CheckRequest) => {
     Modal.confirm({
       title: '确认完成',
@@ -130,6 +229,40 @@ const AcceptPage = () => {
         }
       },
     })
+  }
+
+  const handleRequestShiftChange = async (record: CheckRequest) => {
+    setSelectedRequest(record)
+    setNewEscortId('')
+    shiftChangeForm.resetFields()
+    try {
+      await fetchShiftChanges(record.id)
+    } catch (error: any) {
+      message.error(error.message || '获取替班记录失败')
+    }
+    setShiftChangeModalVisible(true)
+  }
+
+  const handleConfirmShiftChange = async (values: any) => {
+    if (!selectedRequest || !newEscortId) {
+      message.warning('请选择替班陪检员')
+      return
+    }
+
+    try {
+      await api.createShiftChange(selectedRequest.id, {
+        new_escort_id: newEscortId,
+        old_escort_id: currentEscort?.id!,
+        ...values,
+        operator_id: currentEscort?.id,
+        operator_name: currentEscort?.name,
+      })
+      message.success('替班申请已提交')
+      setShiftChangeModalVisible(false)
+      fetchData()
+    } catch (error: any) {
+      message.error(error.message || '替班申请失败')
+    }
   }
 
   const columns = [
@@ -165,7 +298,11 @@ const AcceptPage = () => {
         <Space direction="vertical" size={0}>
           <span style={{ fontWeight: 500 }}>{record.check_type}</span>
           <span style={{ fontSize: 12, color: '#999' }}>{record.check_item}</span>
-          <span style={{ fontSize: 12, color: '#999' }}>{record.check_room}</span>
+          {record.source_department && record.target_department && (
+            <span style={{ fontSize: 12, color: '#1890ff' }}>
+              <EnvironmentOutlined /> {record.source_department} → {record.target_department}
+            </span>
+          )}
         </Space>
       ),
     },
@@ -173,9 +310,16 @@ const AcceptPage = () => {
       title: '状态',
       dataIndex: 'status',
       key: 'status',
-      render: (status: string) => {
+      render: (status: string, record: CheckRequest) => {
         const info = getStatusInfo(status as any)
-        return <Tag color={info.color}>{info.text}</Tag>
+        return (
+          <Space direction="vertical" size={0}>
+            <Tag color={info.color}>{info.text}</Tag>
+            {record.is_cross_department && <Tag color="geekblue" style={{ fontSize: 10 }}>跨科室</Tag>}
+            {record.has_overtime_wait && <Tag color="red" style={{ fontSize: 10 }}>超时</Tag>}
+            {record.has_shift_change && <Tag color="purple" style={{ fontSize: 10 }}>替班</Tag>}
+          </Space>
+        )
       },
     },
     {
@@ -193,47 +337,83 @@ const AcceptPage = () => {
     {
       title: '操作',
       key: 'action',
-      render: (_: any, record: CheckRequest) => (
-        <Space>
-          <Button
-            size="small"
-            icon={<EyeOutlined />}
-            onClick={() => handleViewDetail(record)}
-          >
-            详情
-          </Button>
-          {record.status === 'assigned' && (
+      render: (_: any, record: CheckRequest) => {
+        const canShiftChange = ['assigned', 'accepted', 'in_progress', 'in_transport'].includes(record.status)
+        return (
+          <Space wrap>
             <Button
               size="small"
-              type="primary"
-              icon={<UserOutlined />}
-              onClick={() => handleAccept(record)}
+              icon={<EyeOutlined />}
+              onClick={() => handleViewDetail(record)}
             >
-              接单
+              详情
             </Button>
-          )}
-          {record.status === 'accepted' && (
-            <Button
-              size="small"
-              type="primary"
-              icon={<PlayCircleOutlined />}
-              onClick={() => handleStart(record)}
-            >
-              开始陪检
-            </Button>
-          )}
-          {record.status === 'in_progress' && (
-            <Button
-              size="small"
-              type="primary"
-              icon={<CheckCircleOutlined />}
-              onClick={() => handleComplete(record)}
-            >
-              完成
-            </Button>
-          )}
-        </Space>
-      ),
+            {record.status === 'assigned' && (
+              <Button
+                size="small"
+                type="primary"
+                icon={<UserOutlined />}
+                onClick={() => handleAccept(record)}
+              >
+                接单
+              </Button>
+            )}
+            {record.status === 'accepted' && (
+              <Button
+                size="small"
+                type="primary"
+                icon={<PlayCircleOutlined />}
+                onClick={() => handleStart(record)}
+              >
+                开始陪检
+              </Button>
+            )}
+            {record.status === 'in_progress' && (
+              <Button
+                size="small"
+                type="primary"
+                icon={<ThunderboltOutlined />}
+                onClick={() => handleStartTransport(record)}
+              >
+                开始转运
+              </Button>
+            )}
+            {record.status === 'in_transport' && (
+              <Button
+                size="small"
+                type="primary"
+                icon={<CheckCircleOutlined />}
+                onClick={() => handleCompleteTransport(record)}
+              >
+                完成转运
+              </Button>
+            )}
+            {record.status === 'in_progress' && (
+              <Button
+                size="small"
+                type="default"
+                icon={<CheckCircleOutlined />}
+                onClick={() => handleComplete(record)}
+              >
+                直接完成
+              </Button>
+            )}
+            {canShiftChange && (
+              <Popconfirm
+                title="确认申请替班？"
+                description="申请后将由其他陪检员接手此任务"
+                onConfirm={() => handleRequestShiftChange(record)}
+                okText="确认申请"
+                cancelText="取消"
+              >
+                <Button size="small" icon={<SwapOutlined />}>
+                  替班
+                </Button>
+              </Popconfirm>
+            )}
+          </Space>
+        )
+      },
     },
   ]
 
@@ -241,6 +421,7 @@ const AcceptPage = () => {
     assigned: requests.filter((r) => r.status === 'assigned').length,
     accepted: requests.filter((r) => r.status === 'accepted').length,
     inProgress: requests.filter((r) => r.status === 'in_progress').length,
+    inTransport: requests.filter((r) => r.status === 'in_transport').length,
     completed: requests.filter((r) => ['completed', 'settled'].includes(r.status)).length,
   }
 
@@ -277,22 +458,27 @@ const AcceptPage = () => {
       {currentEscort && (
         <>
           <Row gutter={16} style={{ marginBottom: 16 }}>
-            <Col span={6}>
+            <Col span={5}>
               <Card>
                 <Statistic title="待接单" value={stats.assigned} valueStyle={{ color: '#faad14' }} />
               </Card>
             </Col>
-            <Col span={6}>
+            <Col span={5}>
               <Card>
                 <Statistic title="已接单" value={stats.accepted} valueStyle={{ color: '#1890ff' }} />
               </Card>
             </Col>
-            <Col span={6}>
+            <Col span={5}>
               <Card>
                 <Statistic title="进行中" value={stats.inProgress} valueStyle={{ color: '#13c2c2' }} />
               </Card>
             </Col>
-            <Col span={6}>
+            <Col span={5}>
+              <Card>
+                <Statistic title="转运中" value={stats.inTransport} valueStyle={{ color: '#2f54eb' }} prefix={<ThunderboltOutlined />} />
+              </Card>
+            </Col>
+            <Col span={4}>
               <Card>
                 <Statistic title="已完成" value={stats.completed} valueStyle={{ color: '#52c41a' }} />
               </Card>
@@ -313,6 +499,7 @@ const AcceptPage = () => {
                   <Option value="assigned">待接单</Option>
                   <Option value="accepted">已接单</Option>
                   <Option value="in_progress">进行中</Option>
+                  <Option value="in_transport">转运中</Option>
                   <Option value="completed">已完成</Option>
                   <Option value="settled">已结算</Option>
                 </Select>
@@ -341,7 +528,7 @@ const AcceptPage = () => {
             width={600}
           >
             {selectedRequest && (
-              <Tabs defaultActiveKey="info">
+              <Tabs activeKey={detailTabKey} onChange={setDetailTabKey}>
                 <TabPane tab="基本信息" key="info">
                   <Descriptions column={1} size="small">
                     <Descriptions.Item label="状态">
@@ -367,6 +554,16 @@ const AcceptPage = () => {
                     <Descriptions.Item label="检查项目">
                       {selectedRequest.check_item}
                     </Descriptions.Item>
+                    {selectedRequest.source_department && (
+                      <Descriptions.Item label="来源科室">
+                        {selectedRequest.source_department}
+                      </Descriptions.Item>
+                    )}
+                    {selectedRequest.target_department && (
+                      <Descriptions.Item label="目标科室">
+                        {selectedRequest.target_department}
+                      </Descriptions.Item>
+                    )}
                     <Descriptions.Item label="检查科室">
                       {selectedRequest.check_room}
                     </Descriptions.Item>
@@ -379,7 +576,32 @@ const AcceptPage = () => {
                       {selectedRequest.nurse?.name}
                     </Descriptions.Item>
                     <Descriptions.Item label="等待时长">
-                      {formatDuration(selectedRequest.wait_duration)}
+                      <Space direction="vertical" size={0}>
+                        <span>{formatDuration((selectedRequest.wait_duration || 0) + (selectedRequest.rescheduled_wait_duration || 0) || null)}</span>
+                        {selectedRequest.rescheduled_wait_duration && selectedRequest.rescheduled_wait_duration > 0 && (
+                          <span style={{ fontSize: 11, color: '#fa8c16' }}>
+                            含重排等待 {selectedRequest.rescheduled_wait_duration}分钟
+                          </span>
+                        )}
+                      </Space>
+                    </Descriptions.Item>
+                    {selectedRequest.transport_started_at && (
+                      <Descriptions.Item label="转运时间">
+                        <Space direction="vertical" size={0}>
+                          <span>开始：{formatDateTime(selectedRequest.transport_started_at)}</span>
+                          {selectedRequest.transport_completed_at && (
+                            <span>完成：{formatDateTime(selectedRequest.transport_completed_at)}</span>
+                          )}
+                        </Space>
+                      </Descriptions.Item>
+                    )}
+                    <Descriptions.Item label="特殊标记">
+                      <Space>
+                        {selectedRequest.is_cross_department && <Tag color="geekblue">跨科室转运</Tag>}
+                        {selectedRequest.has_overtime_wait && <Tag color="red">超时等候</Tag>}
+                        {selectedRequest.has_shift_change && <Tag color="purple">替班交接</Tag>}
+                        {!selectedRequest.is_cross_department && !selectedRequest.has_overtime_wait && !selectedRequest.has_shift_change && '-'}
+                      </Space>
                     </Descriptions.Item>
                     <Descriptions.Item label="派单时间">
                       {formatDateTime(selectedRequest.assigned_at)}
@@ -397,6 +619,82 @@ const AcceptPage = () => {
                       {selectedRequest.remark || '-'}
                     </Descriptions.Item>
                   </Descriptions>
+                </TabPane>
+                <TabPane tab="转运记录" key="transports">
+                  {transports.length > 0 ? (
+                    <List
+                      dataSource={transports}
+                      renderItem={(transport) => (
+                        <List.Item>
+                          <List.Item.Meta
+                            title={
+                              <Space>
+                                <Badge status={transport.status === 'completed' ? 'success' : 'processing'} />
+                                <span>{transport.from_department} → {transport.to_department}</span>
+                                {transport.is_cross_department && (
+                                  <Tag color="geekblue" style={{ fontSize: 10 }}>跨科室</Tag>
+                                )}
+                              </Space>
+                            }
+                            description={
+                              <Space direction="vertical" size={0} style={{ fontSize: 12 }}>
+                                {transport.started_at && (
+                                  <span>开始：{formatDateTime(transport.started_at)}</span>
+                                )}
+                                {transport.completed_at && (
+                                  <span>完成：{formatDateTime(transport.completed_at)}</span>
+                                )}
+                                {(transport.actual_duration_minutes || transport.duration_minutes) && (
+                                  <span style={{ color: '#1890ff' }}>
+                                    耗时：{transport.actual_duration_minutes || transport.duration_minutes}分钟
+                                  </span>
+                                )}
+                                {transport.escort_name && (
+                                  <span>陪检员：{transport.escort_name}</span>
+                                )}
+                                {transport.remark && (
+                                  <span style={{ color: '#999' }}>备注：{transport.remark}</span>
+                                )}
+                              </Space>
+                            }
+                          />
+                        </List.Item>
+                      )}
+                    />
+                  ) : (
+                    <Empty description="暂无转运记录" />
+                  )}
+                </TabPane>
+                <TabPane tab="替班记录" key="shifts">
+                  {shiftChanges.length > 0 ? (
+                    <Timeline
+                      items={shiftChanges.map((sc) => ({
+                        color: 'purple',
+                        children: (
+                          <div>
+                            <div style={{ fontWeight: 500 }}>
+                              {sc.old_escort_name || sc.old_escort_id} → {sc.new_escort_name || sc.new_escort_id}
+                            </div>
+                            <div style={{ fontSize: 12, color: '#999' }}>
+                              {sc.operator_name || sc.operator_id} · {formatDateTime(sc.created_at)}
+                            </div>
+                            {sc.reason && (
+                              <div style={{ fontSize: 12, marginTop: 4 }}>
+                                原因：{sc.reason}
+                              </div>
+                            )}
+                            {sc.transfer_notes && (
+                              <div style={{ fontSize: 12, marginTop: 2, color: '#1890ff' }}>
+                                交接说明：{sc.transfer_notes}
+                              </div>
+                            )}
+                          </div>
+                        ),
+                      }))}
+                    />
+                  ) : (
+                    <Empty description="暂无替班记录" />
+                  )}
                 </TabPane>
                 <TabPane tab="操作日志" key="logs">
                   <Timeline
@@ -421,6 +719,99 @@ const AcceptPage = () => {
                   />
                 </TabPane>
               </Tabs>
+            )}
+          </Modal>
+
+          <Modal
+            title="申请替班"
+            open={shiftChangeModalVisible}
+            onOk={() => shiftChangeForm.submit()}
+            onCancel={() => setShiftChangeModalVisible(false)}
+            okText="提交申请"
+            cancelText="取消"
+            width={500}
+          >
+            {selectedRequest && (
+              <div>
+                <Alert
+                  message="申请替班后，此任务将转交其他陪检员"
+                  type="warning"
+                  showIcon
+                  style={{ marginBottom: 16 }}
+                />
+                <Descriptions column={1} size="small" style={{ marginBottom: 16 }}>
+                  <Descriptions.Item label="患者">
+                    {selectedRequest.patient?.name}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="检查项目">
+                    {selectedRequest.check_type} - {selectedRequest.check_item}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="当前状态">
+                    <Tag color={getStatusInfo(selectedRequest.status).color}>
+                      {getStatusInfo(selectedRequest.status).text}
+                    </Tag>
+                  </Descriptions.Item>
+                </Descriptions>
+
+                {shiftChanges.length > 0 && (
+                  <div style={{ marginBottom: 16 }}>
+                    <Divider orientation="left" style={{ margin: '8px 0', fontSize: 12 }}>
+                      历史交接
+                    </Divider>
+                    <Timeline
+                      items={shiftChanges.slice(0, 3).map((sc) => ({
+                        color: 'purple',
+                        children: (
+                          <div style={{ fontSize: 11 }}>
+                            <div>{sc.old_escort_name || sc.from_escort_name || sc.from_escort?.name || '原陪检员'} → {sc.new_escort_name || sc.to_escort_name || sc.to_escort?.name || '新陪检员'}</div>
+                            <div style={{ color: '#999' }}>{formatDateTime(sc.created_at)}</div>
+                          </div>
+                        ),
+                      }))}
+                    />
+                  </div>
+                )}
+
+                <Form
+                  form={shiftChangeForm}
+                  layout="vertical"
+                  onFinish={handleConfirmShiftChange}
+                >
+                  <Form.Item
+                    name="new_escort_id"
+                    label="选择替班陪检员"
+                    rules={[{ required: true, message: '请选择替班陪检员' }]}
+                  >
+                    <Select
+                      placeholder="请选择替班陪检员"
+                      value={newEscortId || undefined}
+                      onChange={(val) => setNewEscortId(val)}
+                    >
+                      {escorts
+                        .filter((e) => e.status === 'online' && e.id !== currentEscort?.id)
+                        .map((e) => (
+                          <Option key={e.id} value={e.id}>
+                            {e.name}
+                            {e.is_specialist ? ' 【专人】' : ''}
+                          </Option>
+                        ))}
+                    </Select>
+                  </Form.Item>
+                  <Form.Item
+                    name="reason"
+                    label="替班原因"
+                    rules={[{ required: true, message: '请填写替班原因' }]}
+                  >
+                    <TextArea rows={2} placeholder="请填写替班原因" />
+                  </Form.Item>
+                  <Form.Item
+                    name="transfer_notes"
+                    label="交接说明"
+                  >
+                    <TextArea rows={2} placeholder="请填写交接说明，如患者情况、注意事项等" />
+                  </Form.Item>
+                </Form>
+              </div>
             )}
           </Modal>
         </>

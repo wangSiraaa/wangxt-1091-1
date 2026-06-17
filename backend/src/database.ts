@@ -203,6 +203,7 @@ function createTables() {
       status TEXT DEFAULT 'offline',
       is_specialist INTEGER DEFAULT 0,
       current_task_id TEXT,
+      current_location TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -214,6 +215,7 @@ function createTables() {
       check_type TEXT NOT NULL,
       check_item TEXT NOT NULL,
       check_room TEXT,
+      target_department TEXT,
       appointment_time TEXT,
       status TEXT DEFAULT 'pending',
       priority TEXT DEFAULT 'normal',
@@ -231,16 +233,24 @@ function createTables() {
       check_type TEXT NOT NULL,
       check_item TEXT,
       check_room TEXT,
+      source_department TEXT,
+      target_department TEXT,
       urgency TEXT DEFAULT 'normal',
       priority INTEGER DEFAULT 0,
       status TEXT DEFAULT 'pending',
       wait_started_at TEXT,
+      rescheduled_wait_duration INTEGER,
       assigned_at TEXT,
       accepted_at TEXT,
       started_at TEXT,
+      transport_started_at TEXT,
+      transport_completed_at TEXT,
       completed_at TEXT,
       settled_at TEXT,
       settlement_amount REAL,
+      is_cross_department INTEGER DEFAULT 0,
+      has_overtime_wait INTEGER DEFAULT 0,
+      has_shift_change INTEGER DEFAULT 0,
       remark TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
@@ -264,11 +274,85 @@ function createTables() {
       created_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS department_distances (
+      id TEXT PRIMARY KEY,
+      source_department TEXT NOT NULL,
+      target_department TEXT NOT NULL,
+      estimated_minutes INTEGER NOT NULL,
+      distance_meters INTEGER,
+      created_at TEXT NOT NULL,
+      UNIQUE(source_department, target_department)
+    );
+
+    CREATE TABLE IF NOT EXISTS assignment_suggestions (
+      id TEXT PRIMARY KEY,
+      request_id TEXT NOT NULL,
+      escort_id TEXT NOT NULL,
+      score REAL NOT NULL,
+      distance_score REAL NOT NULL,
+      load_score REAL NOT NULL,
+      skill_score REAL NOT NULL,
+      priority_score REAL NOT NULL,
+      estimated_arrival_minutes INTEGER NOT NULL,
+      reason TEXT,
+      is_recommended INTEGER DEFAULT 0,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS transports (
+      id TEXT PRIMARY KEY,
+      request_id TEXT NOT NULL,
+      escort_id TEXT NOT NULL,
+      from_department TEXT NOT NULL,
+      to_department TEXT NOT NULL,
+      is_cross_department INTEGER DEFAULT 0,
+      transport_type TEXT NOT NULL,
+      started_at TEXT,
+      completed_at TEXT,
+      duration_minutes INTEGER,
+      status TEXT DEFAULT 'pending',
+      remark TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS shift_changes (
+      id TEXT PRIMARY KEY,
+      request_id TEXT NOT NULL,
+      from_escort_id TEXT NOT NULL,
+      to_escort_id TEXT NOT NULL,
+      operator_id TEXT,
+      operator_name TEXT,
+      reason TEXT,
+      handover_note TEXT,
+      handover_time TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS reschedule_records (
+      id TEXT PRIMARY KEY,
+      request_id TEXT NOT NULL,
+      original_check_time TEXT,
+      new_check_time TEXT,
+      reason TEXT NOT NULL,
+      operator_id TEXT,
+      operator_name TEXT,
+      wait_duration_before INTEGER NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_requests_status ON check_requests(status);
     CREATE INDEX IF NOT EXISTS idx_requests_patient ON check_requests(patient_id);
     CREATE INDEX IF NOT EXISTS idx_requests_escort ON check_requests(escort_id);
     CREATE INDEX IF NOT EXISTS idx_requests_created ON check_requests(created_at);
     CREATE INDEX IF NOT EXISTS idx_logs_request ON request_logs(request_id);
+    CREATE INDEX IF NOT EXISTS idx_suggestions_request ON assignment_suggestions(request_id);
+    CREATE INDEX IF NOT EXISTS idx_transports_request ON transports(request_id);
+    CREATE INDEX IF NOT EXISTS idx_transports_escort ON transports(escort_id);
+    CREATE INDEX IF NOT EXISTS idx_shift_request ON shift_changes(request_id);
+    CREATE INDEX IF NOT EXISTS idx_reschedule_request ON reschedule_records(request_id);
+    CREATE INDEX IF NOT EXISTS idx_distances_source ON department_distances(source_department);
+    CREATE INDEX IF NOT EXISTS idx_distances_target ON department_distances(target_department);
   `);
 }
 
@@ -330,34 +414,63 @@ function seedData() {
   });
 
   const escorts = [
-    { name: "陪检员老赵", employee_no: "E001", phone: "13700137001", status: "online", is_specialist: 0 },
-    { name: "陪检员老钱", employee_no: "E002", phone: "13700137002", status: "online", is_specialist: 0 },
-    { name: "陪检员老孙", employee_no: "E003", phone: "13700137003", status: "online", is_specialist: 1 },
-    { name: "陪检员老李", employee_no: "E004", phone: "13700137004", status: "offline", is_specialist: 1 },
+    { name: "陪检员老赵", employee_no: "E001", phone: "13700137001", status: "online", is_specialist: 0, current_location: "护士站" },
+    { name: "陪检员老钱", employee_no: "E002", phone: "13700137002", status: "online", is_specialist: 0, current_location: "内科一病区" },
+    { name: "陪检员老孙", employee_no: "E003", phone: "13700137003", status: "online", is_specialist: 1, current_location: "外科一病区" },
+    { name: "陪检员老李", employee_no: "E004", phone: "13700137004", status: "offline", is_specialist: 1, current_location: null },
   ];
 
   const insertEscort = db.prepare(
-    "INSERT INTO escorts (id, name, employee_no, phone, status, is_specialist, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    "INSERT INTO escorts (id, name, employee_no, phone, status, is_specialist, current_location, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
   );
   escorts.forEach((e) => {
     const id = uuidv4();
-    insertEscort.run(id, e.name, e.employee_no, e.phone, e.status, e.is_specialist, currentTime, currentTime);
+    insertEscort.run(id, e.name, e.employee_no, e.phone, e.status, e.is_specialist, e.current_location, currentTime, currentTime);
   });
 
   const orders = [
-    { order_no: "CO202401001", patientIdx: 0, checkType: "CT", checkItem: "胸部CT平扫", checkRoom: "CT室1号", priority: "normal" },
-    { order_no: "CO202401002", patientIdx: 1, checkType: "MRI", checkItem: "头颅MRI", checkRoom: "MRI室", priority: "urgent" },
-    { order_no: "CO202401003", patientIdx: 2, checkType: "B超", checkItem: "腹部B超", checkRoom: "B超室2号", priority: "normal" },
-    { order_no: "CO202401004", patientIdx: 3, checkType: "X光", checkItem: "胸部正位片", checkRoom: "X光室1号", priority: "normal" },
-    { order_no: "CO202401005", patientIdx: 4, checkType: "CT", checkItem: "腹部CT增强", checkRoom: "CT室2号", priority: "emergency" },
+    { order_no: "CO202401001", patientIdx: 0, checkType: "CT", checkItem: "胸部CT平扫", checkRoom: "CT室1号", targetDept: "放射科", priority: "normal" },
+    { order_no: "CO202401002", patientIdx: 1, checkType: "MRI", checkItem: "头颅MRI", checkRoom: "MRI室", targetDept: "放射科", priority: "urgent" },
+    { order_no: "CO202401003", patientIdx: 2, checkType: "B超", checkItem: "腹部B超", checkRoom: "B超室2号", targetDept: "超声科", priority: "normal" },
+    { order_no: "CO202401004", patientIdx: 3, checkType: "X光", checkItem: "胸部正位片", checkRoom: "X光室1号", targetDept: "放射科", priority: "normal" },
+    { order_no: "CO202401005", patientIdx: 4, checkType: "CT", checkItem: "腹部CT增强", checkRoom: "CT室2号", targetDept: "放射科", priority: "emergency" },
   ];
 
   const insertOrder = db.prepare(
-    "INSERT INTO check_orders (id, order_no, patient_id, check_type, check_item, check_room, priority, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)"
+    "INSERT INTO check_orders (id, order_no, patient_id, check_type, check_item, check_room, target_department, priority, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)"
   );
   orders.forEach((o) => {
     const id = uuidv4();
-    insertOrder.run(id, o.order_no, patientIds[o.patientIdx], o.checkType, o.checkItem, o.checkRoom, o.priority, currentTime, currentTime);
+    insertOrder.run(id, o.order_no, patientIds[o.patientIdx], o.checkType, o.checkItem, o.checkRoom, o.targetDept, o.priority, currentTime, currentTime);
+  });
+
+  const distances = [
+    { source: "内科一病区", target: "放射科", minutes: 8, meters: 400 },
+    { source: "内科一病区", target: "超声科", minutes: 10, meters: 500 },
+    { source: "内科一病区", target: "检验科", minutes: 5, meters: 250 },
+    { source: "内科二病区", target: "放射科", minutes: 10, meters: 500 },
+    { source: "内科二病区", target: "超声科", minutes: 12, meters: 600 },
+    { source: "外科一病区", target: "放射科", minutes: 6, meters: 300 },
+    { source: "外科一病区", target: "超声科", minutes: 8, meters: 400 },
+    { source: "外科二病区", target: "放射科", minutes: 8, meters: 400 },
+    { source: "ICU病区", target: "放射科", minutes: 5, meters: 250 },
+    { source: "ICU病区", target: "超声科", minutes: 7, meters: 350 },
+    { source: "儿科病区", target: "放射科", minutes: 12, meters: 600 },
+    { source: "护士站", target: "内科一病区", minutes: 3, meters: 150 },
+    { source: "护士站", target: "外科一病区", minutes: 4, meters: 200 },
+    { source: "护士站", target: "ICU病区", minutes: 6, meters: 300 },
+    { source: "放射科", target: "内科一病区", minutes: 8, meters: 400 },
+    { source: "放射科", target: "外科一病区", minutes: 6, meters: 300 },
+    { source: "超声科", target: "内科一病区", minutes: 10, meters: 500 },
+    { source: "超声科", target: "外科一病区", minutes: 8, meters: 400 },
+  ];
+
+  const insertDistance = db.prepare(
+    "INSERT INTO department_distances (id, source_department, target_department, estimated_minutes, distance_meters, created_at) VALUES (?, ?, ?, ?, ?, ?)"
+  );
+  distances.forEach((d) => {
+    const id = uuidv4();
+    insertDistance.run(id, d.source, d.target, d.minutes, d.meters, currentTime);
   });
 }
 

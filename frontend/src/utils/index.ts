@@ -3,9 +3,11 @@ import type { RequestStatus } from '../types'
 
 export const statusMap: Record<RequestStatus, { text: string; color: string }> = {
   pending: { text: '待派单', color: 'orange' },
+  to_reschedule: { text: '待重排', color: 'gold' },
   assigned: { text: '已派单', color: 'blue' },
   accepted: { text: '已接单', color: 'cyan' },
   in_progress: { text: '进行中', color: 'processing' },
+  in_transport: { text: '转运中', color: 'geekblue' },
   completed: { text: '已完成', color: 'success' },
   settled: { text: '已结算', color: 'purple' },
   cancelled: { text: '已取消', color: 'default' },
@@ -25,6 +27,12 @@ export const actionMap: Record<string, string> = {
   complete: '完成陪检',
   settle: '结算',
   cancel: '取消',
+  transport_create: '创建转运',
+  transport_start: '开始转运',
+  transport_complete: '完成转运',
+  to_reschedule: '转待重排',
+  reassign: '重新派单',
+  shift_change: '替班交接',
 }
 
 export function formatDateTime(date?: string): string {
