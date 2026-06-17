@@ -167,8 +167,11 @@ router.get("/:id/logs", (req: Request, res: Response) => {
 router.post("/", (req: Request, res: Response) => {
   const { patient_id, nurse_id, check_order_id, check_type, check_item, check_room, source_department, target_department, urgency, remark } = req.body;
 
-  if (!patient_id || !nurse_id || !check_type) {
-    throw new BusinessError("患者、护士和检查类型为必填项");
+  if (!patient_id || !nurse_id) {
+    throw new BusinessError("患者和护士为必填项");
+  }
+  if (!check_order_id) {
+    throw new BusinessError("必须关联已开立的检查单");
   }
 
   const patient = db.prepare("SELECT * FROM patients WHERE id = ?").get(patient_id) as any;
@@ -181,14 +184,17 @@ router.post("/", (req: Request, res: Response) => {
     throw new BusinessError("护士不存在");
   }
 
-  let orderInfo = null;
-  if (check_order_id) {
-    const order = db.prepare("SELECT * FROM check_orders WHERE id = ?").get(check_order_id) as any;
-    if (!order) {
-      throw new BusinessError("检查单不存在");
-    }
-    orderInfo = order;
+  const order = db.prepare("SELECT * FROM check_orders WHERE id = ?").get(check_order_id) as any;
+  if (!order) {
+    throw new BusinessError("检查单不存在");
   }
+  if (order.patient_id !== patient_id) {
+    throw new BusinessError("检查单与患者不匹配");
+  }
+  if (order.status !== "pending") {
+    throw new BusinessError(`检查单状态异常，仅开立状态的检查单可以提交陪检申请，当前状态：${order.status || '未知'}`);
+  }
+  const orderInfo = order;
 
   const id = uuidv4();
   const currentTime = now();
@@ -613,6 +619,17 @@ router.put("/:id/assign", (req: Request, res: Response) => {
   }
   if (!["pending", "to_reschedule"].includes(request.status)) {
     throw new BusinessError("只有待派单或待重排状态的申请可以派单");
+  }
+
+  if (!request.check_order_id) {
+    throw new BusinessError("申请未关联检查单，无法派单，请先开立检查单");
+  }
+  const checkOrder = db.prepare("SELECT * FROM check_orders WHERE id = ?").get(request.check_order_id) as any;
+  if (!checkOrder) {
+    throw new BusinessError("关联的检查单不存在，无法派单");
+  }
+  if (checkOrder.status !== "pending" && checkOrder.status !== "requested") {
+    throw new BusinessError(`检查单状态异常，仅开立或已申请状态的检查单可以派单，当前状态：${checkOrder.status || '未知'}`);
   }
 
   const escort = db.prepare("SELECT * FROM escorts WHERE id = ?").get(escort_id) as any;

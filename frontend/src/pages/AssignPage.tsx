@@ -122,6 +122,14 @@ const AssignPage = () => {
   }, [statusFilter, wardFilter])
 
   const handleAssign = (record: CheckRequest) => {
+    if (!record.check_order) {
+      message.error('该申请未关联检查单，无法派单')
+      return
+    }
+    if (record.check_order.status !== 'pending' && record.check_order.status !== 'requested') {
+      message.error(`检查单状态异常（${record.check_order.status}），仅开立或已申请状态的检查单可以派单`)
+      return
+    }
     setSelectedRequest(record)
     setSelectedEscort('')
     setAssignModalVisible(true)
@@ -140,6 +148,14 @@ const AssignPage = () => {
 
   const handleConfirmAssign = async () => {
     if (!selectedRequest) return
+    if (!selectedRequest.check_order) {
+      message.error('该申请未关联检查单，无法派单')
+      return
+    }
+    if (selectedRequest.check_order.status !== 'pending' && selectedRequest.check_order.status !== 'requested') {
+      message.error(`检查单状态异常（${selectedRequest.check_order.status}），仅开立或已申请状态的检查单可以派单`)
+      return
+    }
     const escortId = isManualAssign ? selectedEscort : selectedSuggestionId
     if (!escortId) {
       message.warning('请选择陪检员')
@@ -332,8 +348,8 @@ const AssignPage = () => {
       title: '操作',
       key: 'action',
       render: (_: any, record: CheckRequest) => {
-        const canAssign = record.status === 'pending'
-        const canReassign = record.status === 'to_reschedule'
+        const canAssign = record.status === 'pending' && record.check_order && (record.check_order.status === 'pending' || record.check_order.status === 'requested')
+        const canReassign = record.status === 'to_reschedule' && record.check_order && (record.check_order.status === 'pending' || record.check_order.status === 'requested')
         const canShiftChange = ['assigned', 'accepted', 'in_progress', 'in_transport'].includes(record.status) && record.escort_id
         return (
           <Space wrap>
@@ -354,6 +370,11 @@ const AssignPage = () => {
                 派单
               </Button>
             )}
+            {!canAssign && record.status === 'pending' && (
+              <Tooltip title={!record.check_order ? '未关联检查单，无法派单' : `检查单状态异常（${record.check_order.status}），无法派单`}>
+                <Tag color="red">待开立检查单</Tag>
+              </Tooltip>
+            )}
             {canReassign && (
               <Button
                 size="small"
@@ -363,6 +384,11 @@ const AssignPage = () => {
               >
                 重新派单
               </Button>
+            )}
+            {!canReassign && record.status === 'to_reschedule' && (
+              <Tooltip title={!record.check_order ? '未关联检查单，无法重派' : `检查单状态异常（${record.check_order.status}），无法重派`}>
+                <Tag color="red">检查单异常</Tag>
+              </Tooltip>
             )}
             {canShiftChange && (
               <Button
@@ -476,6 +502,9 @@ const AssignPage = () => {
         onCancel={() => setAssignModalVisible(false)}
         okText={isManualAssign ? '确认手动派单' : '确认派单'}
         cancelText="取消"
+        okButtonProps={{
+          disabled: !selectedRequest?.check_order || (selectedRequest?.check_order.status !== 'pending' && selectedRequest?.check_order.status !== 'requested')
+        }}
         width={700}
       >
         {selectedRequest && (
@@ -495,6 +524,24 @@ const AssignPage = () => {
               <Descriptions.Item label="等待时长">
                 {formatDuration(selectedRequest.wait_duration)}
               </Descriptions.Item>
+              <Descriptions.Item label="检查单号" span={2}>
+                {selectedRequest.check_order ? (
+                  <>
+                    {selectedRequest.check_order.order_no}
+                    <Tag
+                      color={selectedRequest.check_order.status === 'pending' || selectedRequest.check_order.status === 'requested' ? 'green' : 'red'}
+                      style={{ marginLeft: 8 }}
+                    >
+                      {selectedRequest.check_order.status === 'pending' ? '已开立' :
+                       selectedRequest.check_order.status === 'requested' ? '已申请' :
+                       selectedRequest.check_order.status === 'completed' ? '已完成' :
+                       selectedRequest.check_order.status === 'cancelled' ? '已取消' : selectedRequest.check_order.status}
+                    </Tag>
+                  </>
+                ) : (
+                  <Tag color="red">未关联</Tag>
+                )}
+              </Descriptions.Item>
               {selectedRequest.source_department && selectedRequest.target_department && (
                 <Descriptions.Item label="转运路线" span={2}>
                   <EnvironmentOutlined /> {selectedRequest.source_department} → {selectedRequest.target_department}
@@ -506,6 +553,24 @@ const AssignPage = () => {
               <Alert
                 message="该患者为隔离患者，必须安排专人陪检"
                 type="warning"
+                showIcon
+                style={{ marginBottom: 16 }}
+              />
+            )}
+
+            {!selectedRequest.check_order && (
+              <Alert
+                message="该申请未关联检查单，无法派单，请先开立检查单"
+                type="error"
+                showIcon
+                style={{ marginBottom: 16 }}
+              />
+            )}
+
+            {selectedRequest.check_order && selectedRequest.check_order.status !== 'pending' && selectedRequest.check_order.status !== 'requested' && (
+              <Alert
+                message={`检查单状态异常（${selectedRequest.check_order.status}），仅开立或已申请状态的检查单可以派单`}
+                type="error"
                 showIcon
                 style={{ marginBottom: 16 }}
               />

@@ -86,17 +86,24 @@ const RequestPage = () => {
 
   const handleOrderChange = (orderId: string) => {
     const order = checkOrders.find((o) => o.id === orderId)
+    const patient = patients.find((p) => p.id === selectedPatient)
     if (order) {
       form.setFieldsValue({
         check_type: order.check_type,
         check_item: order.check_item,
         check_room: order.check_room,
+        target_department: order.target_department,
         urgency: order.priority,
+        source_department: patient?.ward,
       })
     }
   }
 
   const handleSubmit = async (values: any) => {
+    if (!values.check_order_id) {
+      message.error('请先选择已开立的检查单')
+      return
+    }
     try {
       await api.createCheckRequest({
         ...values,
@@ -352,27 +359,42 @@ const RequestPage = () => {
           </Form.Item>
 
           {selectedPatient && (
-            <Form.Item name="check_order_id" label="关联检查单（可选）">
+            <Form.Item
+              name="check_order_id"
+              label="关联检查单"
+              rules={[{ required: true, message: '请选择已开立的检查单' }]}
+            >
               <Select
-                placeholder="选择已开立的检查单"
-                allowClear
+                placeholder="选择已开立且有效的检查单"
                 onChange={handleOrderChange}
+                showSearch
+                optionFilterProp="children"
+                notFoundContent={checkOrders.length === 0 ? '该患者暂无已开立的检查单' : undefined}
               >
                 {checkOrders.map((o) => (
                   <Option key={o.id} value={o.id}>
-                    {o.order_no} - {o.check_item}
+                    {o.order_no} - {o.check_item} [{o.check_type}]
                   </Option>
                 ))}
               </Select>
             </Form.Item>
           )}
 
+          {selectedPatient && checkOrders.length === 0 && (
+            <Alert
+              message="该患者暂无已开立的检查单，请先开立检查单后再提交陪检申请"
+              type="warning"
+              showIcon
+              style={{ marginBottom: 16 }}
+            />
+          )}
+
           <Form.Item
             name="check_type"
             label="检查类型"
-            rules={[{ required: true, message: '请输入检查类型' }]}
+            hidden
           >
-            <Select placeholder="请选择或输入检查类型">
+            <Select>
               <Option value="CT">CT</Option>
               <Option value="MRI">MRI</Option>
               <Option value="B超">B超</Option>
@@ -386,24 +408,24 @@ const RequestPage = () => {
           <Form.Item
             name="check_item"
             label="检查项目"
-            rules={[{ required: true, message: '请输入检查项目' }]}
+            hidden
           >
             <Input placeholder="请输入检查项目" />
           </Form.Item>
 
-          <Form.Item name="source_department" label="来源科室">
+          <Form.Item name="source_department" label="来源科室" hidden>
             <Input placeholder="请输入患者所在科室/病区" />
           </Form.Item>
 
-          <Form.Item name="target_department" label="目标科室">
+          <Form.Item name="target_department" label="目标科室" hidden>
             <Input placeholder="请输入检查科室" />
           </Form.Item>
 
-          <Form.Item name="check_room" label="检查室">
+          <Form.Item name="check_room" label="检查室" hidden>
             <Input placeholder="请输入检查室" />
           </Form.Item>
 
-          <Form.Item name="urgency" label="紧急程度">
+          <Form.Item name="urgency" label="紧急程度" hidden>
             <Select>
               <Option value="normal">普通</Option>
               <Option value="urgent">加急</Option>
@@ -418,7 +440,13 @@ const RequestPage = () => {
           <Form.Item style={{ marginBottom: 0, textAlign: 'right' }}>
             <Space>
               <Button onClick={() => setModalVisible(false)}>取消</Button>
-              <Button type="primary" htmlType="submit">提交</Button>
+              <Button
+                type="primary"
+                htmlType="submit"
+                disabled={!selectedPatient || checkOrders.length === 0}
+              >
+                提交
+              </Button>
             </Space>
           </Form.Item>
         </Form>
